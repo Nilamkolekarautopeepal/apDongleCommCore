@@ -1,7 +1,7 @@
 abstract class IWIfIUSBHandler {
-  bool wIfIDIsconnect();
+  bool wifiDisconnect();
 
-  bool usbDIsconnect();
+  bool usbDisconnect();
 }
 
 enum Protocol {

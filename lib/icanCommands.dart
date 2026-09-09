@@ -15,9 +15,9 @@ abstract class ICANCommands {
 
   Future<dynamic> canGetP2Max();
 
-  Future<dynamic> canStartTP();
+  Future<dynamic> canStartTp();
 
-  Future<dynamic> canStopTP();
+  Future<dynamic> canStopTp();
 
   Future<dynamic> canStartPadding(String padding);
 
