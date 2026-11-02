@@ -16,7 +16,6 @@ import 'package:convert/convert.dart';
 import 'package:flutter_libserialport/flutter_libserialport.dart';
 import 'package:http/http.dart' as http;
 
-
 /// ---------------- MAIN CLASS ----------------
 class DongleCommWin implements ICANCommands, IWIfIUSBHandler, IDongleHandler {
   dynamic responseStructure;
@@ -159,6 +158,29 @@ class DongleCommWin implements ICANCommands, IWIfIUSBHandler, IDongleHandler {
     return null;
   }
 
+  Future<void> _drainWifiQueue() async {
+    if (_wifiQueue == null) return;
+
+    int discarded = 0;
+    while (true) {
+      final bool hasNext = await _wifiQueue!.hasNext.timeout(
+        const Duration(milliseconds: 20),
+        onTimeout: () => false,
+      );
+      if (!hasNext) break;
+
+      final Uint8List stale = await _wifiQueue!.next;
+      discarded++;
+      print(
+        "🧹 [drain] Discarding stale WiFi frame: ${byteArrayToString(stale)}",
+      );
+    }
+
+    if (discarded > 0) {
+      print("🧹 [drain] Discarded $discarded stale frame(s) before send");
+    }
+  }
+
   Future<dynamic> sendCommand(String randomCommand) async {
     print("------SendCommand------");
 
@@ -181,123 +203,205 @@ class DongleCommWin implements ICANCommands, IWIfIUSBHandler, IDongleHandler {
 
   void Function()? raiseCustomEvent;
 
-  Future<dynamic> sendCommandBytes(
-    List<int> command,
-    Function(String)? onDataReceived,
-  ) async {
-    try {
-      print("--- [DEBUG] sendCommandBytes Start ---");
-      String commandHex = byteArrayToString1(Uint8List.fromList(command));
+  // Future<dynamic> sendCommandBytes(
+  //   List<int> command,
+  //   Function(String)? onDataReceived,
+  // ) async {
+  //   try {
+  //     print("--- [DEBUG] sendCommandBytes Start ---");
+  //     String commandHex = byteArrayToString1(Uint8List.fromList(command));
 
-      if (connectivity == ConnectivityType.usb) {
-        print("--- [DEBUG] Connectivity: USB ---");
-        print("--- [DEBUG] Raw Hex to Send: $commandHex");
+  //     if (connectivity == ConnectivityType.usb) {
+  //       print("--- [DEBUG] Connectivity: USB ---");
+  //       print("--- [DEBUG] Raw Hex to Send: $commandHex");
 
-        if (port != null && port!.isOpen) {
-          print("--- [DEBUG] Windows Port ${port!.name} is OPEN ---");
+  //       if (port != null && port!.isOpen) {
+  //         print("--- [DEBUG] Windows Port ${port!.name} is OPEN ---");
 
-          saveLog("${DateTime.now()} Command USB Send = $commandHex\n");
+  //         saveLog("${DateTime.now()} Command USB Send = $commandHex\n");
 
-          final bytesToWrite = Uint8List.fromList(command);
+  //         final bytesToWrite = Uint8List.fromList(command);
 
-          // DO NOT FLUSH HERE
-          // port!.flush(SerialPortBuffer.both);
+  //         // DO NOT FLUSH HERE
+  //         // port!.flush(SerialPortBuffer.both);
 
-          print("--- [DEBUG] Executing port.write()... ---");
+  //         print("--- [DEBUG] Executing port.write()... ---");
 
-          final bytesWritten = port!.write(bytesToWrite);
+  //         final bytesWritten = port!.write(bytesToWrite);
 
-          // FULL WRITE CHECK
-          if (bytesWritten != bytesToWrite.length) {
-            print("--- [ERROR] Partial USB Write ---");
-            print("Expected: ${bytesToWrite.length}");
-            print("Actual  : $bytesWritten");
+  //         // FULL WRITE CHECK
+  //         if (bytesWritten != bytesToWrite.length) {
+  //           print("--- [ERROR] Partial USB Write ---");
+  //           print("Expected: ${bytesToWrite.length}");
+  //           print("Actual  : $bytesWritten");
 
-            return null;
-          }
+  //           return null;
+  //         }
 
-          print(
-            "--- [DEBUG] SUCCESS: Written $bytesWritten/${bytesToWrite.length} bytes ---",
-          );
+  //         print(
+  //           "--- [DEBUG] SUCCESS: Written $bytesWritten/${bytesToWrite.length} bytes ---",
+  //         );
 
-          // More delay for ECU flash response
-          await Future.delayed(const Duration(milliseconds: 5));
+  //         // More delay for ECU flash response
+  //         await Future.delayed(const Duration(milliseconds: 5));
 
-          print("--- [DEBUG] Calling getUSBCommand()... ---");
+  //         print("--- [DEBUG] Calling getUSBCommand()... ---");
 
-          var response = await getUSBCommand();
+  //         var response = await getUSBCommand();
 
-          if (response != null) {
-            print(
-              "--- [DEBUG] RESPONSE RECEIVED: ${byteArrayToString(Uint8List.fromList(response))} ---",
-            );
+  //         if (response != null) {
+  //           print(
+  //             "--- [DEBUG] RESPONSE RECEIVED: ${byteArrayToString(Uint8List.fromList(response))} ---",
+  //           );
 
-            return response;
-          }
+  //           return response;
+  //         }
 
-          print("--- [DEBUG] WARNING: No USB Response ---");
+  //         print("--- [DEBUG] WARNING: No USB Response ---");
 
-          return null;
-        }
+  //         return null;
+  //       }
 
-        print("--- [DEBUG] ERROR: USB Port Closed ---");
+  //       print("--- [DEBUG] ERROR: USB Port Closed ---");
 
-        return null;
-      } else if (connectivity == ConnectivityType.wiFi) {
-        print("--- [DEBUG] Connectivity: WIFI/TCP ---");
-        print("--- [DEBUG] Raw Hex to Send: $commandHex");
+  //       return null;
+  //     } else if (connectivity == ConnectivityType.wiFi) {
+  //       print("--- [DEBUG] Connectivity: WIFI/TCP ---");
+  //       print("--- [DEBUG] Raw Hex to Send: $commandHex");
 
-        if (tcpClient != null) {
-          print("--- [DEBUG] TCP Socket is CONNECTED ---");
+  //       if (tcpClient != null) {
+  //         print("--- [DEBUG] TCP Socket is CONNECTED ---");
 
-          final bytesToSend = Uint8List.fromList(command);
+  //         final bytesToSend = Uint8List.fromList(command);
 
-          // Write to Socket
-          tcpClient!.add(bytesToSend);
-          await tcpClient!.flush();
+  //         // Write to Socket
+  //         tcpClient!.add(bytesToSend);
+  //         await tcpClient!.flush();
 
-          print("--- [DEBUG] SUCCESS: Bytes sent to Socket ---");
+  //         print("--- [DEBUG] SUCCESS: Bytes sent to Socket ---");
 
-          // Optional: Wait for response latency
-          await Future.delayed(const Duration(milliseconds: 5));
+  //         // Optional: Wait for response latency
+  //         await Future.delayed(const Duration(milliseconds: 5));
 
-          print("--- [DEBUG] Calling getWifiCommand()... ---");
-          var response = await getWifiCommand();
+  //         print("--- [DEBUG] Calling getWifiCommand()... ---");
+  //         var response = await getWifiCommand();
 
-          // --- ADDED PRINTS START ---
-          if (response != null && response.isNotEmpty) {
-            print("--- [DEBUG] WIFI RESPONSE RECEIVED (Raw Bytes): $response");
-            print(
-              "--- [DEBUG] WIFI RESPONSE RECEIVED (Hex): ${byteArrayToString(Uint8List.fromList(response))}",
-            );
-            print("--- [DEBUG] WIFI RESPONSE LENGTH: ${response.length}");
+  //         // --- ADDED PRINTS START ---
+  //         if (response != null && response.isNotEmpty) {
+  //           print("--- [DEBUG] WIFI RESPONSE RECEIVED (Raw Bytes): $response");
+  //           print(
+  //             "--- [DEBUG] WIFI RESPONSE RECEIVED (Hex): ${byteArrayToString(Uint8List.fromList(response))}",
+  //           );
+  //           print("--- [DEBUG] WIFI RESPONSE LENGTH: ${response.length}");
 
-            // Safety check to prevent: RangeError (length): Invalid value: Valid value range is empty: 3
-            if (response.length < 4) {
-              print(
-                "--- [DEBUG] WARNING: Response too short to parse MAC ID correctly ---",
-              );
-            }
-          } else {
-            print(
-              "--- [DEBUG] WARNING: getWifiCommand returned NULL or EMPTY ---",
-            );
-          }
-          // --- ADDED PRINTS END ---
+  //           // Safety check to prevent: RangeError (length): Invalid value: Valid value range is empty: 3
+  //           if (response.length < 4) {
+  //             print(
+  //               "--- [DEBUG] WARNING: Response too short to parse MAC ID correctly ---",
+  //             );
+  //           }
+  //         } else {
+  //           print(
+  //             "--- [DEBUG] WARNING: getWifiCommand returned NULL or EMPTY ---",
+  //           );
+  //         }
+  //         // --- ADDED PRINTS END ---
 
-          return response;
-        } else {
-          print("--- [DEBUG] ERROR: tcpClient is NULL during WiFi send ---");
-        }
+  //         return response;
+  //       } else {
+  //         print("--- [DEBUG] ERROR: tcpClient is NULL during WiFi send ---");
+  //       }
+  //     }
+  //     // ... rest of the connectivity types (BT/WiFi) ...
+  //   } catch (e) {
+  //     print("--- [DEBUG] EXCEPTION in sendCommandBytes: $e ---");
+  //   }
+
+  //   print("--- [DEBUG] sendCommandBytes exiting with NULL ---");
+  //   return null;
+  // }
+
+  Future<bool> _usbWriteAll(Uint8List data) async {
+    int offset = 0;
+    final deadline = DateTime.now().add(const Duration(seconds: 5));
+
+    while (offset < data.length) {
+      final int written = port!.write(
+        Uint8List.sublistView(data, offset),
+        timeout: 500,
+      );
+
+      if (written > 0) {
+        offset += written;
+        continue;
       }
-      // ... rest of the connectivity types (BT/WiFi) ...
-    } catch (e) {
-      print("--- [DEBUG] EXCEPTION in sendCommandBytes: $e ---");
+
+      if (written < 0 || DateTime.now().isAfter(deadline)) {
+        print("❌ [USB] write failed at $offset/${data.length} (ret=$written)");
+        port!.flush(SerialPortBuffer.output);
+        return false;
+      }
+
+      await Future.delayed(const Duration(milliseconds: 2));
     }
 
-    print("--- [DEBUG] sendCommandBytes exiting with NULL ---");
-    return null;
+    return true;
   }
+
+  // Future<dynamic> sendCommandBytes(
+  //   List<int> command,
+  //   Function(String)? onDataReceived,
+  // ) async {
+  //   try {
+  //     final Uint8List bytes = Uint8List.fromList(command);
+
+  //     if (connectivity == ConnectivityType.usb) {
+  //       if (port == null || !port!.isOpen) {
+  //         print("❌ [USB] port closed");
+  //         return null;
+  //       }
+
+  //       if (bytes.length <= 64) {
+  //         saveLog(
+  //           "${DateTime.now()} Command USB Send = ${byteArrayToString(bytes)}\n",
+  //         );
+  //       } else {
+  //         saveLog(
+  //           "${DateTime.now()} Command USB Send = ${bytes.length} bytes\n",
+  //         );
+  //       }
+
+  //       final ok = await _usbWriteAll(bytes);
+  //       if (!ok) return null;
+
+  //       await Future.delayed(const Duration(milliseconds: 5));
+
+  //       final response = await getUSBCommand();
+  //       return response;
+  //     }
+
+  //     if (connectivity == ConnectivityType.wiFi) {
+  //       if (tcpClient == null) {
+  //         print("❌ [WIFI] tcpClient is null");
+  //         return null;
+  //       }
+
+  //       await _drainWifiQueue();
+
+  //       tcpClient!.add(bytes);
+  //       await tcpClient!.flush();
+
+  //       await Future.delayed(const Duration(milliseconds: 5));
+
+  //       final Uint8List response = await getWifiCommand();
+  //       return response;
+  //     }
+  //   } catch (e) {
+  //     print("❌ sendCommandBytes exception: $e");
+  //   }
+
+  //   return null;
+  // }
 
   Future<dynamic> sendCommandBytes1(
     List<int> command,
@@ -583,93 +687,230 @@ class DongleCommWin implements ICANCommands, IWIfIUSBHandler, IDongleHandler {
     }
   }
 
-  Future<List<int>?> getUSBCommand() async {
-    try {
-      print("--------- USB READ START ------- ${DateTime.now()}");
+  // Future<List<int>?> getUSBCommand() async {
+  //   try {
+  //     print("--------- USB READ START ------- ${DateTime.now()}");
 
-      // 🔍 CHECK 1: Is the port even valid?
-      if (port == null) {
-        print("❌ DEBUG: 'port' object is NULL");
-      } else if (!port!.isOpen) {
-        print("❌ DEBUG: Port is NOT OPEN. Status: ${port!.isOpen}");
+  //     // 🔍 CHECK 1: Is the port even valid?
+  //     if (port == null) {
+  //       print("❌ DEBUG: 'port' object is NULL");
+  //     } else if (!port!.isOpen) {
+  //       print("❌ DEBUG: Port is NOT OPEN. Status: ${port!.isOpen}");
+  //     }
+
+  //     // ── WINDOWS: read via SerialPort.read() directly ─────────────
+  //     if (port != null && port!.isOpen) {
+  //       List<int> receivedBytes = [];
+  //       final deadline = DateTime.now().add(const Duration(seconds: 1));
+
+  //       print("⏳ DEBUG: Entering Windows Read Loop (5s deadline)...");
+
+  //       while (DateTime.now().isBefore(deadline)) {
+  //         // Read available bytes (non-blocking)
+  //         final chunk = port!.read(4096, timeout: 5);
+
+  //         if (chunk != null && chunk.isNotEmpty) {
+  //           receivedBytes.addAll(chunk);
+  //           print(
+  //             "📥 DEBUG: Raw Chunk Received: ${byteArrayToString(Uint8List.fromList(chunk))}",
+  //           );
+  //           print("📊 DEBUG: Total Buffer Size: ${receivedBytes.length}");
+
+  //           // 🔍 CHECK 2: Is the Header Logic valid?
+  //           if (receivedBytes.length >= 2) {
+  //             int byte0 = receivedBytes[0];
+  //             int byte1 = receivedBytes[1];
+  //             int expectedLen = ((byte0 & 0x0F) << 8) + byte1 + 4;
+
+  //             print("📦 DEBUG: Header Parsed -> Byte0: $byte0, Byte1: $byte1");
+  //             print(
+  //               "📦 DEBUG: Expected Total: $expectedLen | Currently Have: ${receivedBytes.length}",
+  //             );
+
+  //             if (receivedBytes.length >= expectedLen) {
+  //               print("✅ DEBUG: Success! Packet complete.");
+  //               break;
+  //             }
+  //           }
+  //         } else {
+  //           // 🔍 CHECK 3: Are we just looping with no data?
+  //           // print("... waiting for data ..."); // Uncomment if you want to see every poll attempt
+  //           await Future.delayed(const Duration(milliseconds: 5));
+  //         }
+  //       }
+
+  //       if (receivedBytes.isNotEmpty) {
+  //         return Uint8List.fromList(receivedBytes);
+  //       }
+
+  //       print(
+  //         "⏱️ DEBUG: Windows Loop exited - No bytes ever arrived at hardware buffer.",
+  //       );
+  //       return null;
+  //     }
+
+  //     // ── ANDROID ─────────────────────────────────
+  //     print("🤖 DEBUG: Attempting Android Read...");
+  //     List<int> rbuffer = List.filled(4096, 0);
+  //     int len = 0;
+
+  //     if (isObdCharger) {
+  //       print("ℹ️ DEBUG: isObdCharger is TRUE - custom driver logic expected.");
+  //     } else {
+  //       if (usbPort == null) print("❌ DEBUG: Android usbPort is NULL");
+  //       len = await usbPort?.read(rbuffer, 0) ?? 0;
+  //     }
+
+  //     print("📊 DEBUG: Android Read Length: $len");
+
+  //     if (len > 0) {
+  //       final retArray = rbuffer.sublist(0, len);
+  //       return retArray;
+  //     }
+
+  //     print("--------- Could Not Read USB Data -------");
+  //     return null;
+  //   } catch (e) {
+  //     print("💥 DEBUG FATAL ERROR: $e");
+  //     return null;
+  //   }
+  // }
+
+  // ── DongleCommWin — ADD field ──────────────────────────────────────────
+  final List<int> _usbRx = [];
+
+  // ── DongleCommWin — ADD helpers ────────────────────────────────────────
+
+  int? _frameLen(List<int> b) {
+    if (b.length < 2) return null;
+    return (((b[0] & 0x0F) << 8) | b[1]) + 5;
+  }
+
+  List<int>? _takeFrame() {
+    final len = _frameLen(_usbRx);
+    if (len == null || _usbRx.length < len) return null;
+    final frame = _usbRx.sublist(0, len);
+    _usbRx.removeRange(0, len);
+    return frame;
+  }
+
+  bool _isAck(List<int> f) => f.isNotEmpty && (f[0] & 0xF0) == 0x20;
+
+  Uint8List? _assembleResponse() {
+    final first = _takeFrame();
+    if (first == null) return null;
+
+    if (_isAck(first)) {
+      final nextLen = _frameLen(_usbRx);
+      final nextIsEcu = _usbRx.isNotEmpty && (_usbRx[0] & 0xF0) == 0x40;
+      if (nextIsEcu && nextLen != null && _usbRx.length >= nextLen) {
+        final second = _takeFrame()!;
+        return Uint8List.fromList([...first, ...second]);
       }
-
-      // ── WINDOWS: read via SerialPort.read() directly ─────────────
-      if (port != null && port!.isOpen) {
-        List<int> receivedBytes = [];
-        final deadline = DateTime.now().add(const Duration(seconds: 1));
-
-        print("⏳ DEBUG: Entering Windows Read Loop (5s deadline)...");
-
-        while (DateTime.now().isBefore(deadline)) {
-          // Read available bytes (non-blocking)
-          final chunk = port!.read(4096, timeout: 5);
-
-          if (chunk != null && chunk.isNotEmpty) {
-            receivedBytes.addAll(chunk);
-            print(
-              "📥 DEBUG: Raw Chunk Received: ${byteArrayToString(Uint8List.fromList(chunk))}",
-            );
-            print("📊 DEBUG: Total Buffer Size: ${receivedBytes.length}");
-
-            // 🔍 CHECK 2: Is the Header Logic valid?
-            if (receivedBytes.length >= 2) {
-              int byte0 = receivedBytes[0];
-              int byte1 = receivedBytes[1];
-              int expectedLen = ((byte0 & 0x0F) << 8) + byte1 + 4;
-
-              print("📦 DEBUG: Header Parsed -> Byte0: $byte0, Byte1: $byte1");
-              print(
-                "📦 DEBUG: Expected Total: $expectedLen | Currently Have: ${receivedBytes.length}",
-              );
-
-              if (receivedBytes.length >= expectedLen) {
-                print("✅ DEBUG: Success! Packet complete.");
-                break;
-              }
-            }
-          } else {
-            // 🔍 CHECK 3: Are we just looping with no data?
-            // print("... waiting for data ..."); // Uncomment if you want to see every poll attempt
-            await Future.delayed(const Duration(milliseconds: 5));
-          }
-        }
-
-        if (receivedBytes.isNotEmpty) {
-          return Uint8List.fromList(receivedBytes);
-        }
-
-        print(
-          "⏱️ DEBUG: Windows Loop exited - No bytes ever arrived at hardware buffer.",
-        );
-        return null;
-      }
-
-      // ── ANDROID ─────────────────────────────────
-      print("🤖 DEBUG: Attempting Android Read...");
-      List<int> rbuffer = List.filled(4096, 0);
-      int len = 0;
-
-      if (isObdCharger) {
-        print("ℹ️ DEBUG: isObdCharger is TRUE - custom driver logic expected.");
-      } else {
-        if (usbPort == null) print("❌ DEBUG: Android usbPort is NULL");
-        len = await usbPort?.read(rbuffer, 0) ?? 0;
-      }
-
-      print("📊 DEBUG: Android Read Length: $len");
-
-      if (len > 0) {
-        final retArray = rbuffer.sublist(0, len);
-        return retArray;
-      }
-
-      print("--------- Could Not Read USB Data -------");
-      return null;
-    } catch (e) {
-      print("💥 DEBUG FATAL ERROR: $e");
-      return null;
     }
+
+    return Uint8List.fromList(first);
+  }
+
+  // ── DongleCommWin — REPLACE getUSBCommand ──────────────────────────────
+
+  Future<Uint8List> getUSBCommand({
+    Duration timeout = const Duration(seconds: 1),
+  }) async {
+    print("--------- USB READ START ------- ${DateTime.now()}");
+
+    final deadline = DateTime.now().add(timeout);
+
+    while (true) {
+      final ready = _assembleResponse();
+      if (ready != null) {
+        if (_usbRx.isNotEmpty) {
+          print("📦 [USB] frame ready, ${_usbRx.length} bytes kept for next read");
+        }
+        print("--- [DEBUG] RESPONSE RECEIVED: ${_hex(ready)} ---");
+        return ready;
+      }
+
+      if (port == null || !port!.isOpen) {
+        print("❌ [USB] port closed during read");
+        return Uint8List(0);
+      }
+
+      final int available = port!.bytesAvailable;
+      if (available > 0) {
+        final chunk = port!.read(available);
+        _usbRx.addAll(chunk);
+        if (chunk.length <= 64) {
+          print("📥 [USB] chunk: ${_hex(chunk)}");
+        } else {
+          print("📥 [USB] chunk: ${chunk.length} bytes");
+        }
+        continue;
+      }
+
+      if (DateTime.now().isAfter(deadline)) {
+        if (_usbRx.isNotEmpty) {
+          print("⏱️ [USB] timeout with ${_usbRx.length} partial bytes buffered");
+        } else {
+          print("⏱️ [USB] timeout — no bytes");
+        }
+        return Uint8List(0);
+      }
+
+      await Future.delayed(const Duration(milliseconds: 2));
+    }
+  }
+
+  String _hex(List<int> b) =>
+      b.map((x) => x.toRadixString(16).padLeft(2, '0')).join().toUpperCase();
+
+  // ── DongleCommWin — REPLACE sendCommandBytes ───────────────────────────
+  //    (same as before, plus clearing stale RX bytes before each new request)
+
+  Future<dynamic> sendCommandBytes(
+    List<int> command,
+    Function(String)? onDataReceived,
+  ) async {
+    try {
+      final Uint8List bytes = Uint8List.fromList(command);
+
+      if (connectivity == ConnectivityType.usb) {
+        if (port == null || !port!.isOpen) {
+          print("❌ [USB] port closed");
+          return null;
+        }
+
+        if (_usbRx.isNotEmpty) {
+          print("🧹 [USB] discarding ${_usbRx.length} stale bytes: ${_hex(_usbRx)}");
+          _usbRx.clear();
+        }
+
+        final ok = await _usbWriteAll(bytes);
+        if (!ok) return null;
+
+        await Future.delayed(const Duration(milliseconds: 5));
+        return await getUSBCommand();
+      }
+
+      if (connectivity == ConnectivityType.wiFi) {
+        if (tcpClient == null) {
+          print("❌ [WIFI] tcpClient is null");
+          return null;
+        }
+
+        await _drainWifiQueue();
+
+        tcpClient!.add(bytes);
+        await tcpClient!.flush();
+
+        await Future.delayed(const Duration(milliseconds: 5));
+        return await getWifiCommand();
+      }
+    } catch (e) {
+      print("❌ sendCommandBytes exception: $e");
+    }
+
+    return null;
   }
 
   Future<List<int>?> getUSBCommand1() async {
@@ -2335,243 +2576,450 @@ class DongleCommWin implements ICANCommands, IWIfIUSBHandler, IDongleHandler {
     return response;
   }
 
- // static final _lock = Lock();
+  // static final _lock = Lock();
 
-  @override
+  // @override
+  // Future<ResponseArrayStatus> canTxRx(int frameLength, String txData) async {
+  //   // return await _lock.synchronized(() async {
+  //   print("------ Start CAN_TxRx ------");
+  //   print("📤 [canTxRx] frameLength: $frameLength");
+  //   print("📤 [canTxRx] txData: $txData");
+
+  //   try {
+  //     // 1. Prepare Command String
+  //     int dataLength = frameLength + 2; // +2 for CRC bytes
+  //     print("📤 [canTxRx] dataLength (frameLength+2): $dataLength");
+
+  //     String commandHeader = "";
+
+  //     if (isChannel) {
+  //       int firstByte = 0x40 | ((frameLength >> 8) & 0x0F);
+  //       int secondByte = frameLength & 0xFF;
+  //       commandHeader =
+  //           firstByte.toRadixString(16).padLeft(2, '0').toUpperCase() +
+  //           secondByte.toRadixString(16).padLeft(2, '0').toUpperCase() +
+  //           (channelId ?? "00");
+  //       print("📤 [canTxRx] mode: CHANNEL | channelId: $channelId");
+  //     } else {
+  //       int firstByte = 0x40 | ((dataLength >> 8) & 0x0F);
+  //       int secondByte = dataLength & 0xFF;
+  //       commandHeader =
+  //           firstByte.toRadixString(16).padLeft(2, '0').toUpperCase() +
+  //           secondByte.toRadixString(16).padLeft(2, '0').toUpperCase();
+  //       print("📤 [canTxRx] mode: NO-CHANNEL");
+  //       print(
+  //         "📤 [canTxRx] firstByte: 0x${firstByte.toRadixString(16).toUpperCase()}",
+  //       );
+  //       print(
+  //         "📤 [canTxRx] secondByte: 0x${secondByte.toRadixString(16).toUpperCase()}",
+  //       );
+  //     }
+
+  //     print("📤 [canTxRx] commandHeader: $commandHeader");
+
+  //     Uint8List crcBytesComputation = hexStringToByteArray(txData);
+  //     int checksum = Crc16CcittKermit.computeChecksum(crcBytesComputation);
+  //     String crcStr = checksum.toRadixString(16).padLeft(4, '0').toUpperCase();
+
+  //     print(
+  //       "📤 [canTxRx] CRC input (txData bytes): ${byteArrayToString(crcBytesComputation)}",
+  //     );
+  //     print("📤 [canTxRx] checksum int: $checksum");
+  //     print("📤 [canTxRx] crcStr: $crcStr");
+
+  //     String fullCommandHex = commandHeader + txData + crcStr;
+  //     Uint8List sendBytes = hexStringToByteArray(fullCommandHex);
+
+  //     print("📤 [canTxRx] fullCommandHex: $fullCommandHex");
+  //     print("📤 [canTxRx] sendBytes.length: ${sendBytes.length}");
+  //     print("📤 [canTxRx] sendBytes hex: ${byteArrayToString(sendBytes)}");
+  //     print("TX Hex: $fullCommandHex | CRC: $crcStr");
+
+  //     int retryCount = 0;
+  //     const int maxRetries = 5;
+
+  //     while (retryCount <= maxRetries) {
+  //       print("🔄 [canTxRx] attempt: $retryCount / $maxRetries");
+
+  //       dynamic rawResponse;
+
+  //       if (isCanSimulate) {
+  //         print("🔄 [canTxRx] path: SIMULATE");
+  //         rawResponse = await simulateViaApi(txData);
+  //       } else if (platform == PlatformType.android &&
+  //           ConnectivityType == ConnectivityType.rp1210) {
+  //         // RP1210 sends raw txData bytes (no header/CRC wrapper).
+  //         print("🔄 [canTxRx] path: RP1210");
+  //         rawResponse = await sendCommandBytes(crcBytesComputation, (obj) {
+  //           writeConsole(fullCommandHex, byteArrayToString(obj as Uint8List));
+  //         });
+  //       } else {
+  //         print("🔄 [canTxRx] path: NORMAL USB/WIFI");
+  //         rawResponse = await sendCommandBytes(sendBytes, (obj) {
+  //           writeConsole(fullCommandHex, byteArrayToString(obj as Uint8List));
+  //         });
+  //       }
+
+  //       print("📥 [canTxRx] rawResponse type: ${rawResponse?.runtimeType}");
+
+  //       // 3. Handle null / invalid response
+  //       if (rawResponse == null || rawResponse is! Uint8List) {
+  //         print("❌ [canTxRx] null or invalid response — retry $retryCount");
+  //         if (++retryCount > maxRetries) {
+  //           print(
+  //             "❌ [canTxRx] max retries exceeded — returning Communication Error",
+  //           );
+  //           return ResponseArrayStatus(
+  //             ecuResponse: null,
+  //             ecuResponseStatus: "Communication Error",
+  //             actualDataBytes: null,
+  //           );
+  //         }
+  //         await Future.delayed(const Duration(milliseconds: 5));
+  //         continue;
+  //       }
+
+  //       Uint8List ecuResponseBytes = rawResponse;
+  //       print(
+  //         "📥 [canTxRx] ecuResponseBytes: ${byteArrayToString(ecuResponseBytes)}",
+  //       );
+  //       print(
+  //         "📥 [canTxRx] ecuResponseBytes.length: ${ecuResponseBytes.length}",
+  //       );
+
+  //       // 4. Strip known junk prefix that can appear on some WiFi dongles.
+  //       // This mirrors the C# dhcps string-replacement logic.
+  //       ecuResponseBytes = _stripDhcpsJunk(ecuResponseBytes);
+
+  //       // 5. Check for dongle disconnect string
+  //       String strResponse = utf8.decode(
+  //         ecuResponseBytes,
+  //         allowMalformed: true,
+  //       );
+  //       if (strResponse.contains("Dongle disconnected")) {
+  //         print("❌ [canTxRx] Dongle disconnected detected");
+  //         return ResponseArrayStatus(ecuResponseStatus: "Communication Error");
+  //       }
+
+  //       // 6. Decode response
+  //       print("🔍 [canTxRx] decoding response...");
+  //       print("🔍 [canTxRx] isChannel: $isChannel");
+
+  //       Map<String, dynamic> decodeResult;
+  //       if (platform == PlatformType.android &&
+  //           ConnectivityType == ConnectivityType.rp1210) {
+  //         print("🔍 [canTxRx] decode path: RP1210");
+  //         decodeResult = ResponseArrayDecoding.checkResponseRP1210(
+  //           ecuResponseBytes,
+  //           sendBytes,
+  //         );
+  //       } else if (isChannel) {
+  //         print("🔍 [canTxRx] decode path: WITH CHANNEL");
+  //         decodeResult = ResponseArrayDecoding.checkResponseWithChannel(
+  //           ecuResponseBytes,
+  //           sendBytes,
+  //         );
+  //       } else {
+  //         print("🔍 [canTxRx] decode path: STANDARD");
+  //         decodeResult = ResponseArrayDecoding.checkResponse(
+  //           ecuResponseBytes,
+  //           sendBytes,
+  //         );
+  //       }
+
+  //       String status = (decodeResult['status'] as String?) ?? "ERROR";
+  //       Uint8List actualData =
+  //           (decodeResult['dataArray'] as Uint8List?) ?? Uint8List(0);
+
+  //       print("🔍 [canTxRx] decoded status: $status");
+  //       print(
+  //         "🔍 [canTxRx] decoded actualData: ${byteArrayToString(actualData)}",
+  //       );
+
+  //       // 7. SENDAGAIN — re-transmit the full command
+  //       if (status == "SENDAGAIN") {
+  //         print("🔄 [canTxRx] SENDAGAIN — retry $retryCount");
+  //         if (++retryCount > maxRetries) {
+  //           print("❌ [canTxRx] SENDAGAIN threshold crossed");
+  //           return ResponseArrayStatus(
+  //             ecuResponse: ecuResponseBytes,
+  //             ecuResponseStatus: "DONGLEERROR_SENDAGAINTHRESHOLDCROSSED",
+  //             actualDataBytes: actualData,
+  //           );
+  //         }
+  //         await Future.delayed(const Duration(milliseconds: 5));
+  //         continue;
+  //       }
+
+  //       // 8. READAGAIN — response came back partial; keep reading
+  //       if (status == "READAGAIN") {
+  //         print("🔄 [canTxRx] READAGAIN — delegating to _handleReadAgain");
+  //         return await _handleReadAgain(sendBytes);
+  //       }
+
+  //       // 9. Success path
+  //       print("✅ [canTxRx] Final Status: $status");
+  //       print("------ECU RESPONSE START------");
+  //       print(
+  //         "------ECUResponse ------ ${byteArrayToString(ecuResponseBytes)}",
+  //       );
+  //       print("------ActualDataBytes ------ ${byteArrayToString(actualData)}");
+  //       print("------ECUResponseStatus ------ $status");
+  //       print("------ECU RESPONSE END------");
+
+  //       return ResponseArrayStatus(
+  //         ecuResponse: ecuResponseBytes,
+  //         ecuResponseStatus: status,
+  //         actualDataBytes: actualData,
+  //       );
+  //     }
+
+  //     // Should not reach here, but guard just in case
+  //     print("❌ [canTxRx] Exited retry loop unexpectedly");
+  //     return ResponseArrayStatus(
+  //       ecuResponse: null,
+  //       ecuResponseStatus: "Communication Error",
+  //       actualDataBytes: null,
+  //     );
+  //   } on ArgumentError catch (e) {
+  //     print("🔥 [canTxRx] ArgumentError: $e");
+  //     return ResponseArrayStatus(
+  //       ecuResponse: null,
+  //       ecuResponseStatus: "Communication Error",
+  //       actualDataBytes: null,
+  //     );
+  //   } on TimeoutException catch (e) {
+  //     print("🔥 [canTxRx] TimeoutException: $e");
+  //     return ResponseArrayStatus(
+  //       ecuResponse: null,
+  //       ecuResponseStatus: "Communication Error",
+  //       actualDataBytes: null,
+  //     );
+  //   } catch (e) {
+  //     print("🔥 [canTxRx] Fatal Exception: $e");
+  //     return ResponseArrayStatus(
+  //       ecuResponse: null,
+  //       ecuResponseStatus: "Communication Error",
+  //       actualDataBytes: null,
+  //     );
+  //   }
+  // }
+  // //);
+  // // }
   Future<ResponseArrayStatus> canTxRx(int frameLength, String txData) async {
-   // return await _lock.synchronized(() async {
-      print("------ Start CAN_TxRx ------");
-      print("📤 [canTxRx] frameLength: $frameLength");
-      print("📤 [canTxRx] txData: $txData");
+    print("------ Start CAN_TxRx ------");
+    print("📤 [canTxRx] frameLength: $frameLength");
+    print("📤 [canTxRx] txData: $txData");
 
-      try {
-        // 1. Prepare Command String
-        int dataLength = frameLength + 2; // +2 for CRC bytes
-        print("📤 [canTxRx] dataLength (frameLength+2): $dataLength");
+    try {
+      // 1. Prepare command
+      int dataLength = frameLength + 2; // +2 for CRC bytes
+      print("📤 [canTxRx] dataLength (frameLength+2): $dataLength");
 
-        String commandHeader = "";
+      String commandHeader = "";
 
-        if (isChannel) {
-          int firstByte = 0x40 | ((frameLength >> 8) & 0x0F);
-          int secondByte = frameLength & 0xFF;
-          commandHeader =
-              firstByte.toRadixString(16).padLeft(2, '0').toUpperCase() +
-              secondByte.toRadixString(16).padLeft(2, '0').toUpperCase() +
-              (channelId ?? "00");
-          print("📤 [canTxRx] mode: CHANNEL | channelId: $channelId");
+      if (isChannel) {
+        int firstByte = 0x40 | ((frameLength >> 8) & 0x0F);
+        int secondByte = frameLength & 0xFF;
+        commandHeader =
+            firstByte.toRadixString(16).padLeft(2, '0').toUpperCase() +
+            secondByte.toRadixString(16).padLeft(2, '0').toUpperCase() +
+            (channelId ?? "00");
+        print("📤 [canTxRx] mode: CHANNEL | channelId: $channelId");
+      } else {
+        int firstByte = 0x40 | ((dataLength >> 8) & 0x0F);
+        int secondByte = dataLength & 0xFF;
+        commandHeader =
+            firstByte.toRadixString(16).padLeft(2, '0').toUpperCase() +
+            secondByte.toRadixString(16).padLeft(2, '0').toUpperCase();
+        print("📤 [canTxRx] mode: NO-CHANNEL");
+      }
+
+      print("📤 [canTxRx] commandHeader: $commandHeader");
+
+      Uint8List crcBytesComputation = hexStringToByteArray(txData);
+      int checksum = Crc16CcittKermit.computeChecksum(crcBytesComputation);
+      String crcStr = checksum.toRadixString(16).padLeft(4, '0').toUpperCase();
+
+      String fullCommandHex = commandHeader + txData + crcStr;
+      Uint8List sendBytes = hexStringToByteArray(fullCommandHex);
+
+      print("TX Hex: $fullCommandHex | CRC: $crcStr");
+
+      // Request SID = first byte of the UDS payload (same for channel / non-channel)
+      final int? reqSid = crcBytesComputation.isNotEmpty
+          ? crcBytesComputation[0]
+          : null;
+
+      int retryCount = 0;
+      const int maxRetries = 5;
+
+      while (retryCount <= maxRetries) {
+        print("🔄 [canTxRx] attempt: $retryCount / $maxRetries");
+
+        dynamic rawResponse;
+
+        if (isCanSimulate) {
+          print("🔄 [canTxRx] path: SIMULATE");
+          rawResponse = await simulateViaApi(txData);
+        } else if (platform == PlatformType.android &&
+            connectivity == ConnectivityType.rp1210) {
+          // ✅ FIX: was `ConnectivityType == ...` (always false)
+          print("🔄 [canTxRx] path: RP1210");
+          rawResponse = await sendCommandBytes(crcBytesComputation, (obj) {
+            writeConsole(fullCommandHex, obj);
+          });
         } else {
-          int firstByte = 0x40 | ((dataLength >> 8) & 0x0F);
-          int secondByte = dataLength & 0xFF;
-          commandHeader =
-              firstByte.toRadixString(16).padLeft(2, '0').toUpperCase() +
-              secondByte.toRadixString(16).padLeft(2, '0').toUpperCase();
-          print("📤 [canTxRx] mode: NO-CHANNEL");
-          print(
-            "📤 [canTxRx] firstByte: 0x${firstByte.toRadixString(16).toUpperCase()}",
-          );
-          print(
-            "📤 [canTxRx] secondByte: 0x${secondByte.toRadixString(16).toUpperCase()}",
-          );
+          print("🔄 [canTxRx] path: NORMAL USB/WIFI");
+          rawResponse = await sendCommandBytes(sendBytes, (obj) {
+            writeConsole(fullCommandHex, obj);
+          });
         }
 
-        print("📤 [canTxRx] commandHeader: $commandHeader");
+        print("📥 [canTxRx] rawResponse type: ${rawResponse?.runtimeType}");
 
-        Uint8List crcBytesComputation = hexStringToByteArray(txData);
-        int checksum = Crc16CcittKermit.computeChecksum(crcBytesComputation);
-        String crcStr = checksum
-            .toRadixString(16)
-            .padLeft(4, '0')
-            .toUpperCase();
-
-        print(
-          "📤 [canTxRx] CRC input (txData bytes): ${byteArrayToString(crcBytesComputation)}",
-        );
-        print("📤 [canTxRx] checksum int: $checksum");
-        print("📤 [canTxRx] crcStr: $crcStr");
-
-        String fullCommandHex = commandHeader + txData + crcStr;
-        Uint8List sendBytes = hexStringToByteArray(fullCommandHex);
-
-        print("📤 [canTxRx] fullCommandHex: $fullCommandHex");
-        print("📤 [canTxRx] sendBytes.length: ${sendBytes.length}");
-        print("📤 [canTxRx] sendBytes hex: ${byteArrayToString(sendBytes)}");
-        print("TX Hex: $fullCommandHex | CRC: $crcStr");
-
-        int retryCount = 0;
-        const int maxRetries = 5;
-
-        while (retryCount <= maxRetries) {
-          print("🔄 [canTxRx] attempt: $retryCount / $maxRetries");
-
-          dynamic rawResponse;
-
-          if (isCanSimulate) {
-            print("🔄 [canTxRx] path: SIMULATE");
-            rawResponse = await simulateViaApi(txData);
-          } else if (platform == PlatformType.android &&
-              ConnectivityType == ConnectivityType.rp1210) {
-            // RP1210 sends raw txData bytes (no header/CRC wrapper).
-            print("🔄 [canTxRx] path: RP1210");
-            rawResponse = await sendCommandBytes(crcBytesComputation, (obj) {
-              writeConsole(fullCommandHex, byteArrayToString(obj as Uint8List));
-            });
-          } else {
-            print("🔄 [canTxRx] path: NORMAL USB/WIFI");
-            rawResponse = await sendCommandBytes(sendBytes, (obj) {
-              writeConsole(fullCommandHex, byteArrayToString(obj as Uint8List));
-            });
-          }
-
-          print("📥 [canTxRx] rawResponse type: ${rawResponse?.runtimeType}");
-
-          // 3. Handle null / invalid response
-          if (rawResponse == null || rawResponse is! Uint8List) {
-            print("❌ [canTxRx] null or invalid response — retry $retryCount");
-            if (++retryCount > maxRetries) {
-              print(
-                "❌ [canTxRx] max retries exceeded — returning Communication Error",
-              );
-              return ResponseArrayStatus(
-                ecuResponse: null,
-                ecuResponseStatus: "Communication Error",
-                actualDataBytes: null,
-              );
-            }
-            await Future.delayed(const Duration(milliseconds: 5));
-            continue;
-          }
-
-          Uint8List ecuResponseBytes = rawResponse;
+        // 2. Null / invalid / EMPTY (timeout) → retry
+        if (rawResponse == null ||
+            rawResponse is! Uint8List ||
+            rawResponse.isEmpty) {
           print(
-            "📥 [canTxRx] ecuResponseBytes: ${byteArrayToString(ecuResponseBytes)}",
+            "❌ [canTxRx] null, invalid or empty response — retry $retryCount",
           );
-          print(
-            "📥 [canTxRx] ecuResponseBytes.length: ${ecuResponseBytes.length}",
-          );
-
-          // 4. Strip known junk prefix that can appear on some WiFi dongles.
-          // This mirrors the C# dhcps string-replacement logic.
-          ecuResponseBytes = _stripDhcpsJunk(ecuResponseBytes);
-
-          // 5. Check for dongle disconnect string
-          String strResponse = utf8.decode(
-            ecuResponseBytes,
-            allowMalformed: true,
-          );
-          if (strResponse.contains("Dongle disconnected")) {
-            print("❌ [canTxRx] Dongle disconnected detected");
+          if (++retryCount > maxRetries) {
+            print("❌ [canTxRx] max retries exceeded — Communication Error");
             return ResponseArrayStatus(
+              ecuResponse: null,
               ecuResponseStatus: "Communication Error",
+              actualDataBytes: null,
             );
           }
+          await Future.delayed(const Duration(milliseconds: 5));
+          continue;
+        }
 
-          // 6. Decode response
-          print("🔍 [canTxRx] decoding response...");
-          print("🔍 [canTxRx] isChannel: $isChannel");
+        Uint8List ecuResponseBytes = _stripDhcpsJunk(rawResponse);
+        print(
+          "📥 [canTxRx] ecuResponseBytes: ${byteArrayToString(ecuResponseBytes)}",
+        );
 
-          Map<String, dynamic> decodeResult;
-          if (platform == PlatformType.android &&
-              ConnectivityType == ConnectivityType.rp1210) {
-            print("🔍 [canTxRx] decode path: RP1210");
-            decodeResult = ResponseArrayDecoding.checkResponseRP1210(
-              ecuResponseBytes,
-              sendBytes,
-            );
-          } else if (isChannel) {
-            print("🔍 [canTxRx] decode path: WITH CHANNEL");
-            decodeResult = ResponseArrayDecoding.checkResponseWithChannel(
-              ecuResponseBytes,
-              sendBytes,
-            );
-          } else {
-            print("🔍 [canTxRx] decode path: STANDARD");
-            decodeResult = ResponseArrayDecoding.checkResponse(
-              ecuResponseBytes,
-              sendBytes,
-            );
-          }
+        // 3. Dongle disconnect
+        final String strResponse = utf8.decode(
+          ecuResponseBytes,
+          allowMalformed: true,
+        );
+        if (strResponse.contains("Dongle disconnected")) {
+          print("❌ [canTxRx] Dongle disconnected detected");
+          return ResponseArrayStatus(ecuResponseStatus: "Communication Error");
+        }
 
-          String status = (decodeResult['status'] as String?) ?? "ERROR";
-          Uint8List actualData =
-              (decodeResult['dataArray'] as Uint8List?) ?? Uint8List(0);
-
-          print("🔍 [canTxRx] decoded status: $status");
-          print(
-            "🔍 [canTxRx] decoded actualData: ${byteArrayToString(actualData)}",
+        // 4. Decode
+        Map<String, dynamic> decodeResult;
+        if (platform == PlatformType.android &&
+            connectivity == ConnectivityType.rp1210) {
+          print("🔍 [canTxRx] decode path: RP1210");
+          decodeResult = ResponseArrayDecoding.checkResponseRP1210(
+            ecuResponseBytes,
+            sendBytes,
           );
-
-          // 7. SENDAGAIN — re-transmit the full command
-          if (status == "SENDAGAIN") {
-            print("🔄 [canTxRx] SENDAGAIN — retry $retryCount");
-            if (++retryCount > maxRetries) {
-              print("❌ [canTxRx] SENDAGAIN threshold crossed");
-              return ResponseArrayStatus(
-                ecuResponse: ecuResponseBytes,
-                ecuResponseStatus: "DONGLEERROR_SENDAGAINTHRESHOLDCROSSED",
-                actualDataBytes: actualData,
-              );
-            }
-            await Future.delayed(const Duration(milliseconds: 5));
-            continue;
-          }
-
-          // 8. READAGAIN — response came back partial; keep reading
-          if (status == "READAGAIN") {
-            print("🔄 [canTxRx] READAGAIN — delegating to _handleReadAgain");
-            return await _handleReadAgain(sendBytes);
-          }
-
-          // 9. Success path
-          print("✅ [canTxRx] Final Status: $status");
-          print("------ECU RESPONSE START------");
-          print(
-            "------ECUResponse ------ ${byteArrayToString(ecuResponseBytes)}",
+        } else if (isChannel) {
+          print("🔍 [canTxRx] decode path: WITH CHANNEL");
+          decodeResult = ResponseArrayDecoding.checkResponseWithChannel(
+            ecuResponseBytes,
+            sendBytes,
           );
-          print(
-            "------ActualDataBytes ------ ${byteArrayToString(actualData)}",
-          );
-          print("------ECUResponseStatus ------ $status");
-          print("------ECU RESPONSE END------");
-
-          return ResponseArrayStatus(
-            ecuResponse: ecuResponseBytes,
-            ecuResponseStatus: status,
-            actualDataBytes: actualData,
+        } else {
+          print("🔍 [canTxRx] decode path: STANDARD");
+          decodeResult = ResponseArrayDecoding.checkResponse(
+            ecuResponseBytes,
+            sendBytes,
           );
         }
 
-        // Should not reach here, but guard just in case
-        print("❌ [canTxRx] Exited retry loop unexpectedly");
-        return ResponseArrayStatus(
-          ecuResponse: null,
-          ecuResponseStatus: "Communication Error",
-          actualDataBytes: null,
+        final String status = (decodeResult['status'] as String?) ?? "ERROR";
+        final Uint8List actualData =
+            (decodeResult['dataArray'] as Uint8List?) ?? Uint8List(0);
+
+        print("🔍 [canTxRx] decoded status: $status");
+        print(
+          "🔍 [canTxRx] decoded actualData: ${byteArrayToString(actualData)}",
         );
-      } on ArgumentError catch (e) {
-        print("🔥 [canTxRx] ArgumentError: $e");
-        return ResponseArrayStatus(
-          ecuResponse: null,
-          ecuResponseStatus: "Communication Error",
-          actualDataBytes: null,
+
+        // 5. SENDAGAIN
+        if (status == "SENDAGAIN") {
+          print("🔄 [canTxRx] SENDAGAIN — retry $retryCount");
+          if (++retryCount > maxRetries) {
+            return ResponseArrayStatus(
+              ecuResponse: ecuResponseBytes,
+              ecuResponseStatus: "DONGLEERROR_SENDAGAINTHRESHOLDCROSSED",
+              actualDataBytes: actualData,
+            );
+          }
+          await Future.delayed(const Duration(milliseconds: 5));
+          continue;
+        }
+
+        // 6. READAGAIN
+        if (status == "READAGAIN") {
+          print("🔄 [canTxRx] READAGAIN — delegating to _handleReadAgain");
+          return await _handleReadAgain(sendBytes, reqSid);
+        }
+
+        // 7. ✅ FIX: NOERROR but data is not the answer to THIS request
+        //    (stale frame from previous request, or 7F xx 78 pending)
+        if (status == "NOERROR" && reqSid != null) {
+          final bool positive =
+              actualData.isNotEmpty && actualData[0] == reqSid + 0x40;
+          final bool negative =
+              actualData.length > 1 &&
+              actualData[0] == 0x7F &&
+              actualData[1] == reqSid;
+          final bool pending =
+              negative && actualData.length > 2 && actualData[2] == 0x78;
+
+          if ((!positive && !negative) || pending) {
+            print(
+              "⚠️ [canTxRx] ${byteArrayToString(actualData)} is not the answer to "
+              "SID 0x${reqSid.toRadixString(16).padLeft(2, '0').toUpperCase()} "
+              "${pending ? '(response pending)' : '(stale)'} — reading again",
+            );
+            return await _handleReadAgain(sendBytes, reqSid);
+          }
+        }
+
+        // 8. Success
+        print("✅ [canTxRx] Final Status: $status");
+        print("------ECU RESPONSE START------");
+        print(
+          "------ECUResponse ------ ${byteArrayToString(ecuResponseBytes)}",
         );
-      } on TimeoutException catch (e) {
-        print("🔥 [canTxRx] TimeoutException: $e");
+        print("------ActualDataBytes ------ ${byteArrayToString(actualData)}");
+        print("------ECUResponseStatus ------ $status");
+        print("------ECU RESPONSE END------");
+
         return ResponseArrayStatus(
-          ecuResponse: null,
-          ecuResponseStatus: "Communication Error",
-          actualDataBytes: null,
-        );
-      } catch (e) {
-        print("🔥 [canTxRx] Fatal Exception: $e");
-        return ResponseArrayStatus(
-          ecuResponse: null,
-          ecuResponseStatus: "Communication Error",
-          actualDataBytes: null,
+          ecuResponse: ecuResponseBytes,
+          ecuResponseStatus: status,
+          actualDataBytes: actualData,
         );
       }
+
+      print("❌ [canTxRx] Exited retry loop unexpectedly");
+      return ResponseArrayStatus(
+        ecuResponse: null,
+        ecuResponseStatus: "Communication Error",
+        actualDataBytes: null,
+      );
+    } on ArgumentError catch (e) {
+      print("🔥 [canTxRx] ArgumentError: $e");
+      return ResponseArrayStatus(ecuResponseStatus: "Communication Error");
+    } on TimeoutException catch (e) {
+      print("🔥 [canTxRx] TimeoutException: $e");
+      return ResponseArrayStatus(ecuResponseStatus: "Communication Error");
+    } catch (e) {
+      print("🔥 [canTxRx] Fatal Exception: $e");
+      return ResponseArrayStatus(ecuResponseStatus: "Communication Error");
     }
-    //);
- // }
+  }
 
   Uint8List _stripDhcpsJunk(Uint8List input) {
     const String junk = "dhcps: send_offer>>udp_sendto result 0";
@@ -2584,119 +3032,227 @@ class DongleCommWin implements ICANCommands, IWIfIUSBHandler, IDongleHandler {
     return input;
   }
 
-  Future<ResponseArrayStatus> _handleReadAgain(Uint8List sendBytes) async {
-    print("------ _handleReadAgain START ------");
-    print("📤 [_handleReadAgain] sendBytes: ${byteArrayToString(sendBytes)}");
-    final int? requestSid = sendBytes.length > 3 ? sendBytes[3] : null;
-    print(
-      "📤 [_handleReadAgain] requestSid: "
-      "${requestSid != null ? '0x${requestSid.toRadixString(16).padLeft(2, '0').toUpperCase()}' : 'unknown'}",
-    );
+  // Future<ResponseArrayStatus> _handleReadAgain(Uint8List sendBytes) async {
+  //   print("------ _handleReadAgain START ------");
+  //   print("📤 [_handleReadAgain] sendBytes: ${byteArrayToString(sendBytes)}");
+  //   final int? requestSid = sendBytes.length > 3 ? sendBytes[3] : null;
+  //   print(
+  //     "📤 [_handleReadAgain] requestSid: "
+  //     "${requestSid != null ? '0x${requestSid.toRadixString(16).padLeft(2, '0').toUpperCase()}' : 'unknown'}",
+  //   );
 
-    String currentStatus = "READAGAIN";
-    ResponseArrayStatus finalStruct = ResponseArrayStatus(
-      ecuResponseStatus: "READAGAIN",
-    );
+  //   String currentStatus = "READAGAIN";
+  //   ResponseArrayStatus finalStruct = ResponseArrayStatus(
+  //     ecuResponseStatus: "READAGAIN",
+  //   );
 
-    const int maxReads = 20;
-    int readCount = 0;
+  //   const int maxReads = 20;
+  //   int readCount = 0;
 
-    while (currentStatus == "READAGAIN" && readCount < maxReads) {
-      readCount++;
-      print("🔄 [_handleReadAgain] read attempt: $readCount / $maxReads");
+  //   while (currentStatus == "READAGAIN" && readCount < maxReads) {
+  //     readCount++;
+  //     print("🔄 [_handleReadAgain] read attempt: $readCount / $maxReads");
 
-      saveLog("------Read Again------\n");
+  //     saveLog("------Read Again------\n");
 
-      await Future.delayed(const Duration(milliseconds: 5));
+  //     await Future.delayed(const Duration(milliseconds: 5));
 
-      dynamic raw = await readData();
+  //     dynamic raw = await readData();
 
-      if (raw == null) {
-        print("❌ [_handleReadAgain] readData returned null — skipping");
-        continue;
-      }
+  //     if (raw == null) {
+  //       print("❌ [_handleReadAgain] readData returned null — skipping");
+  //       continue;
+  //     }
 
-      Uint8List readBytes = raw as Uint8List;
+  //     Uint8List readBytes = raw as Uint8List;
 
-      // Strip junk prefix before any further processing
-      readBytes = _stripDhcpsJunk(readBytes);
+  //     // Strip junk prefix before any further processing
+  //     readBytes = _stripDhcpsJunk(readBytes);
 
-      print("📥 [_handleReadAgain] readBytes: ${byteArrayToString(readBytes)}");
-      print("📥 [_handleReadAgain] readBytes.length: ${readBytes.length}");
+  //     print("📥 [_handleReadAgain] readBytes: ${byteArrayToString(readBytes)}");
+  //     print("📥 [_handleReadAgain] readBytes.length: ${readBytes.length}");
 
-      // Check for dongle disconnect on every read iteration (fix applied)
-      String strRead = utf8.decode(readBytes, allowMalformed: true);
-      if (strRead.contains("Dongle disconnected")) {
-        print("❌ [_handleReadAgain] Dongle disconnected detected");
+  //     // Check for dongle disconnect on every read iteration (fix applied)
+  //     String strRead = utf8.decode(readBytes, allowMalformed: true);
+  //     if (strRead.contains("Dongle disconnected")) {
+  //       print("❌ [_handleReadAgain] Dongle disconnected detected");
+  //       return ResponseArrayStatus(ecuResponseStatus: "Communication Error");
+  //     }
+  //     Map<String, dynamic> retryResult = isChannel
+  //         ? ResponseArrayDecoding.checkResponseWithChannel(readBytes, sendBytes)
+  //         : ResponseArrayDecoding.checkResponse(readBytes, sendBytes);
+
+  //     String decodedStatus = (retryResult['status'] as String?) ?? "ERROR";
+  //     Uint8List actualData =
+  //         (retryResult['dataArray'] as Uint8List?) ?? Uint8List(0);
+
+  //     print("🔍 [_handleReadAgain] decoded status: $decodedStatus");
+  //     print(
+  //       "🔍 [_handleReadAgain] decoded actualData: ${byteArrayToString(actualData)}",
+  //     );
+
+  //     if (requestSid != null &&
+  //         decodedStatus != "READAGAIN" &&
+  //         decodedStatus != "Communication Error" &&
+  //         actualData.isNotEmpty) {
+  //       final Uint8List sidCheckData = decodedStatus == "NOERROR"
+  //           ? actualData
+  //           : _extractUdsPayloadForSidCheck(actualData);
+
+  //       final int respFirstByte = sidCheckData[0];
+  //       final bool isPositiveMatch = respFirstByte == (requestSid + 0x40);
+  //       final bool isNegativeMatch =
+  //           respFirstByte == 0x7F &&
+  //           sidCheckData.length > 1 &&
+  //           sidCheckData[1] == requestSid;
+
+  //       if (!isPositiveMatch && !isNegativeMatch) {
+  //         print(
+  //           "⚠️ [_handleReadAgain] SID MISMATCH — expected response for SID "
+  //           "0x${requestSid.toRadixString(16).padLeft(2, '0').toUpperCase()} "
+  //           "but got frame starting with "
+  //           "0x${respFirstByte.toRadixString(16).padLeft(2, '0').toUpperCase()}"
+  //           "${actualData.length > 1 ? ' 0x${actualData[1].toRadixString(16).padLeft(2, '0').toUpperCase()}' : ''} "
+  //           "— treating as stale, discarding and reading again",
+  //         );
+  //         currentStatus = "READAGAIN";
+  //         continue;
+  //       }
+  //     }
+
+  //     currentStatus = decodedStatus;
+
+  //     finalStruct = ResponseArrayStatus(
+  //       ecuResponse: readBytes,
+  //       ecuResponseStatus: currentStatus,
+  //       actualDataBytes: actualData,
+  //     );
+
+  //     print("------EXTRA READ DATA START------");
+  //     print("------ECUResponse ------ ${byteArrayToString(readBytes)}");
+  //     print("------ActualDataBytes ------ ${byteArrayToString(actualData)}");
+  //     print("------ECUResponseStatus ------ $currentStatus");
+  //     print("------EXTRA READ DATA END------");
+  //   }
+
+  //   if (currentStatus == "READAGAIN") {
+  //     print(
+  //       "❌ [_handleReadAgain] max reads ($maxReads) reached — still READAGAIN",
+  //     );
+  //   } else {
+  //     print("✅ [_handleReadAgain] final status: $currentStatus");
+  //   }
+
+  //   print("------ _handleReadAgain END ------");
+  //   return finalStruct;
+  // }
+
+  Future<ResponseArrayStatus> _handleReadAgain(
+    Uint8List sendBytes, [
+    int? requestSidParam,
+  ]) async {
+    final int sidIndex = isChannel ? 3 : 2;
+    final int? requestSid =
+        requestSidParam ??
+        (sendBytes.length > sidIndex ? sendBytes[sidIndex] : null);
+
+    const Duration normalTimeout = Duration(seconds: 5);
+    const Duration pendingTimeout = Duration(seconds: 30);
+
+    DateTime deadline = DateTime.now().add(normalTimeout);
+
+    while (DateTime.now().isBefore(deadline)) {
+      final Uint8List? raw = await readData();
+
+      if (raw == null || raw.isEmpty) continue;
+
+      final Uint8List readBytes = _stripDhcpsJunk(raw);
+      print("📥 [_handleReadAgain] ${byteArrayToString(readBytes)}");
+
+      if (utf8
+          .decode(readBytes, allowMalformed: true)
+          .contains("Dongle disconnected")) {
         return ResponseArrayStatus(ecuResponseStatus: "Communication Error");
       }
-      Map<String, dynamic> retryResult = isChannel
+
+      final Map<String, dynamic> result = isChannel
           ? ResponseArrayDecoding.checkResponseWithChannel(readBytes, sendBytes)
           : ResponseArrayDecoding.checkResponse(readBytes, sendBytes);
 
-      String decodedStatus = (retryResult['status'] as String?) ?? "ERROR";
-      Uint8List actualData =
-          (retryResult['dataArray'] as Uint8List?) ?? Uint8List(0);
+      final String status = (result['status'] as String?) ?? "ERROR";
+      final Uint8List data =
+          (result['dataArray'] as Uint8List?) ?? Uint8List(0);
 
-      print("🔍 [_handleReadAgain] decoded status: $decodedStatus");
-      print(
-        "🔍 [_handleReadAgain] decoded actualData: ${byteArrayToString(actualData)}",
-      );
+      if (_containsPending(readBytes, requestSid)) {
+        deadline = DateTime.now().add(pendingTimeout);
+        print("⏳ [_handleReadAgain] response pending — waiting up to 30s");
+        continue;
+      }
 
-      if (requestSid != null &&
-          decodedStatus != "READAGAIN" &&
-          decodedStatus != "Communication Error" &&
-          actualData.isNotEmpty) {
-        final Uint8List sidCheckData = decodedStatus == "NOERROR"
-            ? actualData
-            : _extractUdsPayloadForSidCheck(actualData);
+      if (status == "READAGAIN") continue;
 
-        final int respFirstByte = sidCheckData[0];
-        final bool isPositiveMatch = respFirstByte == (requestSid + 0x40);
-        final bool isNegativeMatch =
-            respFirstByte == 0x7F &&
-            sidCheckData.length > 1 &&
-            sidCheckData[1] == requestSid;
+      if (status == "Communication Error") {
+        return ResponseArrayStatus(
+          ecuResponse: readBytes,
+          ecuResponseStatus: status,
+          actualDataBytes: data,
+        );
+      }
 
-        if (!isPositiveMatch && !isNegativeMatch) {
+      if (data.isEmpty) continue;
+
+      if (requestSid != null) {
+        final Uint8List sidData = status == "NOERROR"
+            ? data
+            : _extractUdsPayloadForSidCheck(data);
+
+        if (sidData.isEmpty) continue;
+
+        final bool positive = sidData[0] == requestSid + 0x40;
+        final bool negative =
+            sidData[0] == 0x7F &&
+            sidData.length > 1 &&
+            sidData[1] == requestSid;
+
+        if (negative && sidData.length > 2 && sidData[2] == 0x78) {
+          deadline = DateTime.now().add(pendingTimeout);
+          continue;
+        }
+
+        if (!positive && !negative) {
           print(
-            "⚠️ [_handleReadAgain] SID MISMATCH — expected response for SID "
-            "0x${requestSid.toRadixString(16).padLeft(2, '0').toUpperCase()} "
-            "but got frame starting with "
-            "0x${respFirstByte.toRadixString(16).padLeft(2, '0').toUpperCase()}"
-            "${actualData.length > 1 ? ' 0x${actualData[1].toRadixString(16).padLeft(2, '0').toUpperCase()}' : ''} "
-            "— treating as stale, discarding and reading again",
+            "⚠️ [_handleReadAgain] stale frame discarded: "
+            "${byteArrayToString(sidData)}",
           );
-          currentStatus = "READAGAIN";
           continue;
         }
       }
 
-      currentStatus = decodedStatus;
-
-      finalStruct = ResponseArrayStatus(
+      print("✅ [_handleReadAgain] $status | ${byteArrayToString(data)}");
+      return ResponseArrayStatus(
         ecuResponse: readBytes,
-        ecuResponseStatus: currentStatus,
-        actualDataBytes: actualData,
+        ecuResponseStatus: status,
+        actualDataBytes: data,
       );
-
-      print("------EXTRA READ DATA START------");
-      print("------ECUResponse ------ ${byteArrayToString(readBytes)}");
-      print("------ActualDataBytes ------ ${byteArrayToString(actualData)}");
-      print("------ECUResponseStatus ------ $currentStatus");
-      print("------EXTRA READ DATA END------");
     }
 
-    if (currentStatus == "READAGAIN") {
-      print(
-        "❌ [_handleReadAgain] max reads ($maxReads) reached — still READAGAIN",
-      );
-    } else {
-      print("✅ [_handleReadAgain] final status: $currentStatus");
-    }
+    print("❌ [_handleReadAgain] TIMEOUT — no response from ECU");
+    return ResponseArrayStatus(
+      ecuResponse: null,
+      ecuResponseStatus: "Communication Error",
+      actualDataBytes: null,
+    );
+  }
 
-    print("------ _handleReadAgain END ------");
-    return finalStruct;
+  bool _containsPending(Uint8List bytes, int? sid) {
+    for (int i = 0; i + 2 < bytes.length; i++) {
+      if (bytes[i] == 0x7F &&
+          (sid == null || bytes[i + 1] == sid) &&
+          bytes[i + 2] == 0x78) {
+        return true;
+      }
+    }
+    return false;
   }
 
   Uint8List _extractUdsPayloadForSidCheck(Uint8List raw) {
@@ -3409,7 +3965,9 @@ class DongleCommWin implements ICANCommands, IWIfIUSBHandler, IDongleHandler {
             headers: {'Content-Type': 'application/json'},
             body: jsonEncode(body),
           )
-          .timeout(const Duration(seconds: 8)); // ✅ ONLY FIX: was missing before, so this await could hang forever
+          .timeout(
+            const Duration(seconds: 8),
+          ); // ✅ ONLY FIX: was missing before, so this await could hang forever
 
       print("CAN Simulate API: CAN REQUEST : $requestPayload");
       print("CAN Simulate API: CAN RESPONSE : ${response.body}");
@@ -3437,8 +3995,6 @@ class DongleCommWin implements ICANCommands, IWIfIUSBHandler, IDongleHandler {
       return errorResponse;
     }
   }
-
-  
 
   Uint8List getCan2xFormat(String response) {
     try {
